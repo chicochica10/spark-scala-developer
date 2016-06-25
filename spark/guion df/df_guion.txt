@@ -1,0 +1,213 @@
+SparkSQL link:
+http://spark.apache.org/docs/latest/sql-programming-guide.html
+
+Lo primero que vamos a hacer es trabajar con la consola de spark-shell para scala.
+Como ya sabemos va spark contiene un contexto conocido como Spark context. Si vemos la consola del spark
+shell vemos que esta ya creado, al igual que un contexto para sqlContext
+
+> spark-shell ...
+
+...
+Spark context available as sc.
+
+...
+
+SQL context available as sqlContext.
+
+Vamos a importar la librería de implicitos  de Scala (no teneis que saber nada de implicitos en Scala en este punto. Lo único es que sirven para que se pueda hacer casting de objetos en scala sin necesidad de indicar explicitamente el tipo origen y destino).
+
+// this is used to implicitly convert an RDD to a DataFrame.
+scala> import sqlContext.implicits._
+import sqlContext.implicits._
+
+
+scala> val df = sqlContext.read.json("/home/ubuntu/people.json") <-- es jsonFile
+df: org.apache.spark.sql.DataFrame = [age: bigint, name: string]
+
+// Podriamos cargar igualmente una tabla de hive, o un fichero desde AWS S3 como vimos en las traspas, o más cosas....
+
+
+// Ya hemos creado el dataframe que es del tipo org.apache.spark.sql.DataFrame y tiene asociado un esquema 
+[age: bigint, name: string]
+
+// podemos ver que operaciones (transformaciones y acciones) lleva asociado el dataframe. NOTA: podemos autocompletar en la consola de spark-shell, en la de Scala en la de Python no :(
+scala> df.
+agg                 apply               as                  asInstanceOf        
+cache               coalesce            col                 collect             
+collectAsList       columns             count               createJDBCTable     
+cube                describe            distinct            drop                
+dropDuplicates      dtypes              except              explain             
+explode             filter              first               flatMap             
+foreach             foreachPartition    groupBy             head                
+inputFiles          insertInto          insertIntoJDBC      intersect           
+isInstanceOf        isLocal             javaRDD             join                
+limit               map                 mapPartitions       na                  
+orderBy             persist             printSchema         queryExecution      
+randomSplit         rdd                 registerTempTable   repartition         
+rollup              sample              save                saveAsParquetFile   
+saveAsTable         schema              select              selectExpr          
+show                sort                sqlContext          stat                
+take                toDF                toJSON              toJavaRDD           
+toSchemaRDD         toString            unionAll            unpersist           
+where               withColumn          withColumnRenamed   write      
+
+
+// Fijaros la cantidad de cosas que podemos hacer. Por ejemplo, mostrar el esquema (cuando trabajamos con datos es lo más importante)
+
+scala> df.printSchema()
+root
+ |-- age: long (nullable = true)
+ |-- name: string (nullable = true)
+
+// Fijaros que internamente la edad no es un bigint sino de tipo long
+
+// Vamos a ver el contenido. Para ello utilizamos la operacion show
+scala> df.show()
++----+-------+
+| age|   name|
++----+-------+
+|null|Michael|
+|  30|   Andy|
+|  19| Justin|
++----+-------+
+
+// Podemos acceder indivualmente a las columnas igualmente.
+scala> df.select("name").show()
++-------+
+|   name|
++-------+
+|Michael|
+|   Andy|
+| Justin|
++-------+
+
+
+// mostrar el nombre y la edad más 1
+df.select(df("name"), df("age") + 1).show()
++-------+---------+
+|   name|(age + 1)|
++-------+---------+
+|Michael|     null|
+|   Andy|       31|
+| Justin|       20|
++-------+---------+
+// Fijaros que con lo que ya sabeis de Spark podríais hacer cosas similares sobre este dataset. ¿Qué transformación os suena parecida a este select de la api de dataframes?
+scala> df.map(person => (person(0), person(1))).collect()
+res19: Array[(Any, Any)] = Array((null,Michael), (30,Andy), (19,Justin))
+
+scala> df.map(person => (Some(person(0)).getOrElse(0).asInstanceOf[Long]+1, person(1))).collect()
+res25: Array[(Long, Any)] = Array((1,Michael), (31,Andy), (20,Justin))
+
+
+scala> df.filter(df("age") > 21).show()
++---+----+
+|age|name|
++---+----+
+| 30|Andy|
++---+----+
+
+// Count people by age
+df.groupBy("age").count().show()
+scala> df.groupBy("age").count().show()
++----+-----+                                                                    
+| age|count|
++----+-----+
+|null|    1|
+|  19|    1|
+|  30|    1|
++----+-----+
+
+
+Otra cosa que podemos hacer sería registrar el dataframe como una tabla temporal y hacer queries sobre ella.
+df.registerTempTable("persons")
+scala> val persons = sqlContext.sql("select *  from persons")
+scala> persons.show()
++----+-------+
+| age|   name|
++----+-------+
+|null|Michael|
+|  30|   Andy|
+|  19| Justin|
++----+-------+
+
+
+// HEMOS VISTO QUE CON Spark podemos trabajar directamente con RDDs
+// Usando reflexión:
+
+
+// Para ello utilizamos una case class de Scala (--> Pattern matching ...)
+case class Person(name: String, age: Int)
+scala> Person.
+apply          asInstanceOf   curried        isInstanceOf   toString       tupled         
+unapply
+
+// Creamos un dataframe de otra forma
+val people = sc.textFile("/home/ubuntu/resources/people.txt").map(_.split(",")).map(p => Person(p(0), p(1).trim.toInt)).toDF()
+people.registerTempTable("people")
+
+
+val teenagers = sqlContext.sql("SELECT name, age FROM people WHERE age >= 13 AND age <= 19")
+teenagers.map(t => "Name: " + t(0)).collect().foreach(println)
+scala> teenagers.map(t => "Name: " + t(0)).collect().foreach(println)
+Name: Justin
+
+
+//otra forma de crear dataframes
+val test = sqlContext.createDataFrame(Seq(
+  (4L, "spark i j k"),
+  (5L, "l m n"),
+  (6L, "mapreduce spark"),
+  (7L, "apache hadoop")
+)).toDF("id", "text")
+
+// api programatica
+test.show()
+test.select ("text", df("id")+1)
+test.filter (df("id") > 5)
+
+// También podemos de manera programatica definir el esquema (bastante más feo)
+
+1. Tenemos que definiir el esquema de manera textual
+2. Importar el tipo Row de spark y ciertas estructuras 
+3. Crear el esquema a mano
+4. Convertir los datos a Row
+5. Crear un dataframe a partir de los row y el esquema
+6. Operar con él
+
+val people = sc.textFile("/home/ubuntu/resources/people.txt")
+val schemaString = "name age"
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.types.{StructType,StructField,StringType};
+val schema =
+  StructType(
+    schemaString.split(" ").map(fieldName => StructField(fieldName, StringType, true)))
+val rowRDD = people.map(_.split(",")).map(p => Row(p(0), p(1).trim))
+val peopleDataFrame = sqlContext.createDataFrame(rowRDD, schema)
+peopleDataFrame.registerTempTable("people")
+val results = sqlContext.sql("SELECT name FROM people")
+results.map(t => "Name: " + t(0)).collect().foreach(println)
+
+
+//Vamos a ver parquet, hive:
+
+// Vamos a coger un fichero en parquet y lo vamos a salvar previamente seleccionando alguno de sus campos
+val df = sqlContext.parquetFile("/home/ubuntu/resources/users.parquet")
+df.select("name", "favorite_color").saveAsParquetFile("/home/ubuntu/resources/namesAndFavColors.parquet")
+
+// Va a generar ficheros part-x-... de manera similar a como se trabaja con mapreduce
+
+//Enseñarle el contenido del fichero, hacer la prueba seleccionando solo el name y no el favorite_color
+
+// Ahora lo vemos con Hive (spark internamente crea un metastore_db y un warehouse).
+// Puede que no sea necesario dependiendo de la version de spark-shell
+import org.apache.spark.sql.hive.HiveContext
+val hiveCtx = new HiveContext(sc)
+
+sqlContext.sql("CREATE TABLE IF NOT EXISTS src (key INT, value STRING)")
+sqlContext.sql("LOAD DATA LOCAL INPATH '/home/ubuntu/resources/kv1.txt' INTO TABLE src")
+
+results = sqlContext.sql("FROM src SELECT key, value").collect()
+
+//Puede dar problemas si no tenemos existen los directorios para para el warehouse (crearlos y darlos permisos)
+
+
